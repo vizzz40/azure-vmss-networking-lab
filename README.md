@@ -24,10 +24,42 @@ The application is intentionally small. The main learning outcome is the infrast
 
 ## Architecture
 
-```text
-Internet → Standard Public IP → Azure Load Balancer → VM Scale Set → FastAPI
-                                                      ↓
-                                               NAT Gateway → Internet
+```mermaid
+flowchart LR
+    client[Internet client]
+    admin[Administrator]
+    packages[Package repositories]
+    monitor[Azure Monitor autoscale]
+    bootstrap[user_Data.sh]
+
+    subgraph rg[Azure resource group]
+        public_ip[Standard public IP<br/>Zones 1, 2, 3]
+        load_balancer[Standard Load Balancer<br/>Frontend TCP 80]
+        nat_ip[NAT public IP]
+        nat_gateway[NAT Gateway]
+
+        subgraph vnet[Virtual network 10.0.0.0/16]
+            subgraph subnet[Subnet 10.0.0.0/20 and subnet NSG]
+                backend_pool[Load Balancer backend pool]
+                vmss[Orchestrated VM Scale Set<br/>Zone 1 · initial capacity 3<br/>autoscale range 1-10]
+                app[Ubuntu VM instances<br/>FastAPI managed by systemd<br/>TCP 8000]
+            end
+        end
+    end
+
+    client -->|HTTP TCP 80| public_ip
+    public_ip --> load_balancer
+    load_balancer -->|TCP 80 to 8000| backend_pool
+    load_balancer -.->|HTTP probe / on 8000| backend_pool
+    backend_pool --> vmss
+    vmss --> app
+    admin -.->|TCP 50000-50010 to 22<br/>trusted CIDR only| load_balancer
+    load_balancer -.-> vmss
+    bootstrap -.->|cloud-init custom data| vmss
+    monitor -->|CPU scale actions| vmss
+    app -->|outbound traffic| nat_gateway
+    nat_gateway --> nat_ip
+    nat_ip --> packages
 ```
 
 The Load Balancer accepts HTTP on port 80 and forwards requests to FastAPI on port 8000. Azure Monitor adjusts VMSS capacity from CPU metrics, while the NAT Gateway provides a dedicated outbound path for the private instances.
