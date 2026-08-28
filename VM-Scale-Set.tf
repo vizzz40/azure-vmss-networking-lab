@@ -2,21 +2,22 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "vmss" {
   name                = "my-orchestrated-vmss"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  
-  platform_fault_domain_count = 1 #for better reliability
+
+  platform_fault_domain_count = 1
   sku_name                    = "Standard_B1s"
-  instances = 3 #this gives high availability to us, if 1 or 2 VMs go down 1 will still stay up
-  zones = ["1"]
-  
-  user_data_base64 = base64encode(file("user_Data.sh"))
+  instances                   = 3
+  zones                       = ["1"]
 
   os_profile {
+    custom_data = base64encode(file("${path.module}/user_Data.sh"))
+
     linux_configuration {
       disable_password_authentication = true
       admin_username                  = "azureuser"
+
       admin_ssh_key {
         username   = "azureuser"
-        public_key = file(".ssh/id_rsa.pub")
+        public_key = var.ssh_public_key
       }
     }
   }
@@ -46,15 +47,14 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "vmss" {
   }
 
   lifecycle {
-    ignore_changes = [
-      instances
-    ]
+    ignore_changes = [instances]
   }
+
+  depends_on = [
+    azurerm_subnet_network_security_group_association.subnet_nsg_association,
+    azurerm_subnet_nat_gateway_association.subnet_nat_assoc
+  ]
 }
-
-
-
-#now we write the autoscaling part
 
 resource "azurerm_monitor_autoscale_setting" "autoscale" {
   name                = "autoscale-config"
@@ -71,10 +71,7 @@ resource "azurerm_monitor_autoscale_setting" "autoscale" {
       maximum = 10
     }
 
-
-#Scaling out laws
-
-  rule {
+    rule {
       metric_trigger {
         metric_name        = "Percentage CPU"
         metric_resource_id = azurerm_orchestrated_virtual_machine_scale_set.vmss.id
@@ -93,8 +90,8 @@ resource "azurerm_monitor_autoscale_setting" "autoscale" {
         cooldown  = "PT1M"
       }
     }
-#Scaling in laws
-  rule {
+
+    rule {
       metric_trigger {
         metric_name        = "Percentage CPU"
         metric_resource_id = azurerm_orchestrated_virtual_machine_scale_set.vmss.id
@@ -105,6 +102,7 @@ resource "azurerm_monitor_autoscale_setting" "autoscale" {
         operator           = "LessThan"
         threshold          = 10
       }
+
       scale_action {
         direction = "Decrease"
         type      = "ChangeCount"
@@ -112,5 +110,5 @@ resource "azurerm_monitor_autoscale_setting" "autoscale" {
         cooldown  = "PT1M"
       }
     }
-}
+  }
 }

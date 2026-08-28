@@ -1,0 +1,2 @@
+admin_source_cidr = "203.0.113.10/32"
+ssh_public_key    = "replace-with-your-openssh-public-key"

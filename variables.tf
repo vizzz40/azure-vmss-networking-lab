@@ -17,7 +17,27 @@ variable "vnet_address_space" {
 }
 
 variable "subnet_address_prefix" {
-  description = "Address prefix for Subnet A"
+  description = "Address prefix for the VMSS subnet"
   type        = list(string)
   default     = ["10.0.0.0/20"]
+}
+
+variable "admin_source_cidr" {
+  description = "Trusted administrator CIDR allowed to reach SSH through the Load Balancer NAT rule"
+  type        = string
+
+  validation {
+    condition     = can(cidrhost(var.admin_source_cidr, 0))
+    error_message = "admin_source_cidr must be a valid IPv4 or IPv6 CIDR block. Use a /32 for one IPv4 address."
+  }
+}
+
+variable "ssh_public_key" {
+  description = "OpenSSH public key installed for the azureuser account"
+  type        = string
+
+  validation {
+    condition     = can(regex("^ssh-(rsa|ed25519|ecdsa)", trimspace(var.ssh_public_key)))
+    error_message = "ssh_public_key must be a valid OpenSSH-format public key."
+  }
 }
