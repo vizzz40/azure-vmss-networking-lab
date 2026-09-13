@@ -147,10 +147,6 @@ Repeated requests may show different hostnames as the Load Balancer distributes 
 - VM user data contains no credentials or application secrets.
 - Terraform variable files, state files, plans, environment files, and private keys are ignored by Git.
 
-## Automated checks
-
-[GitHub Actions](.github/workflows/validate.yml) checks Terraform formatting and configuration, Bash syntax, ShellCheck findings and embedded Python syntax on pushes to `main` and pull requests. The workflow also supports manual runs and requires no Azure credentials.
-
 ## Design scope
 
 This is a focused learning project rather than a production platform:

@@ -73,4 +73,4 @@ The diagram shows logical paths using the default region and network ranges. Sol
 
 ## Production considerations
 
-A production evolution could spread compute across multiple availability zones, keep at least two instances, terminate TLS through an appropriate ingress service, store Terraform state remotely, and add centralized telemetry. The current CI workflow performs static validation; it does not plan or deploy Azure resources.
+A production evolution could spread compute across multiple availability zones, keep at least two instances, terminate TLS through an appropriate ingress service, store Terraform state remotely, and add centralized telemetry.
