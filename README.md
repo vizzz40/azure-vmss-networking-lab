@@ -1,91 +1,66 @@
 # Azure VMSS Networking Lab
 
-Terraform-based Azure infrastructure lab exploring how networking, load balancing, autoscaling, and virtual machine provisioning work together in a scalable web architecture.
+An Azure networking lab built with Terraform: private VM Scale Set instances behind a public Load Balancer, with CPU autoscaling, NAT Gateway egress and automated Linux provisioning.
 
 **Technologies:** Azure · Terraform · Virtual Machine Scale Sets · Load Balancer · NAT Gateway · Network Security Groups · Cloud-init · FastAPI
 
 ## Why I built this
 
-I built this project to move beyond deploying a single virtual machine and understand how Azure infrastructure components form a complete system. The focus was learning how requests reach private compute instances, how unhealthy instances leave Load Balancer rotation, how outbound traffic is controlled, and how capacity changes automatically with demand.
+I built this lab to understand how requests reach private compute instances, how health probes affect traffic routing, and how outbound connectivity and autoscaling fit together. A small FastAPI application returns the hostname of the instance serving each request, keeping the focus on networking and systems architecture.
 
-The application is intentionally small. The main learning outcome is the infrastructure and the reasoning behind its network paths, security boundaries, and availability trade-offs.
+## Start here
 
-## What this project demonstrates
-
-- Infrastructure as Code with reusable Terraform variables and outputs
-- Public-to-private request routing through Azure Load Balancer
-- VM Scale Set integration with a backend pool and health probe
-- CPU-based horizontal autoscaling between 1 and 10 instances
-- Subnet-level traffic control with a Network Security Group
-- Controlled outbound connectivity through Azure NAT Gateway
-- Automated Linux provisioning with cloud-init and `systemd`
-- SSH access restricted to an explicitly trusted administrator CIDR
-- Awareness of the difference between instance redundancy and zone resilience
+- [Networking](main.tf) — VNet, subnet NSG, Load Balancer, SSH forwarding and NAT Gateway.
+- [Compute and autoscaling](VM-Scale-Set.tf) — VMSS provisioning, capacity rules and infrastructure dependencies.
+- [Application bootstrap](user_Data.sh) — FastAPI installation and its non-root systemd service.
+- [Architecture notes](docs/architecture.md) — traffic paths, security boundaries and availability trade-offs.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    client[Internet client]
-    admin[Administrator]
-    packages[Package repositories]
-    monitor[Azure Monitor autoscale]
-    bootstrap[user_Data.sh]
+flowchart TB
+    client["Internet client"]
+    admin["Administrator<br/>Trusted IP / CIDR"]
 
-    subgraph rg[Azure resource group]
-        public_ip[Standard public IP<br/>Zones 1, 2, 3]
-        load_balancer[Standard Load Balancer<br/>Frontend TCP 80]
-        nat_ip[NAT public IP]
-        nat_gateway[NAT Gateway]
+    subgraph azure["Azure · Italy North — default region"]
+        lb["Standard Load Balancer + public IP<br/>Frontend TCP 80 · public IP zones 1–3"]
 
-        subgraph vnet[Virtual network 10.0.0.0/16]
-            subgraph subnet[Subnet 10.0.0.0/20 and subnet NSG]
-                backend_pool[Load Balancer backend pool]
-                vmss[Orchestrated VM Scale Set<br/>Zone 1 · initial capacity 3<br/>autoscale range 1-10]
-                app[Ubuntu VM instances<br/>FastAPI managed by systemd<br/>TCP 8000]
+        subgraph network["Virtual network · 10.0.0.0/16"]
+            subgraph subnet["Subnet · 10.0.0.0/20 · NSG"]
+                pool["Backend pool"]
+                vmss["VM Scale Set · Zone 1<br/>3 initial instances · autoscale 1–10"]
+                app["Ubuntu 22.04 · FastAPI<br/>systemd service · TCP 8000"]
+                pool --> vmss --> app
             end
+            nat["NAT Gateway + public IP"]
         end
+
+        monitor["Azure Monitor<br/>CPU-based autoscaling"]
+        bootstrap["Cloud-init<br/>user_Data.sh"]
     end
 
-    client -->|HTTP TCP 80| public_ip
-    public_ip --> load_balancer
-    load_balancer -->|TCP 80 to 8000| backend_pool
-    load_balancer -.->|HTTP probe / on 8000| backend_pool
-    backend_pool --> vmss
-    vmss --> app
-    admin -.->|TCP 50000-50010 to 22<br/>trusted CIDR only| load_balancer
-    load_balancer -.-> vmss
-    bootstrap -.->|cloud-init custom data| vmss
-    monitor -->|CPU scale actions| vmss
-    app -->|outbound traffic| nat_gateway
-    nat_gateway --> nat_ip
-    nat_ip --> packages
+    packages["Internet / package repositories"]
+
+    client -->|"HTTP · TCP 80"| lb
+    lb -->|"Forward to TCP 8000"| pool
+    lb -.->|"HTTP health probe · /"| app
+    admin -.->|"SSH · ports 50000–50010 → 22"| lb
+    lb -.->|"SSH forwarding"| vmss
+    monitor -.->|"Adjust capacity"| vmss
+    bootstrap -.->|"Provision instances"| vmss
+    app -->|"Outbound connections"| nat
+    nat --> packages
 ```
 
-The Load Balancer accepts HTTP on port 80 and forwards requests to FastAPI on port 8000. Azure Monitor adjusts VMSS capacity from CPU metrics, while the NAT Gateway provides a dedicated outbound path for the private instances.
-
-See [docs/architecture.md](docs/architecture.md) for the complete diagram, traffic paths, security boundaries, and availability model.
-
-## Azure resources
-
-| Resource | Responsibility |
-| --- | --- |
-| Resource Group | Contains the lab resources |
-| Virtual Network and Subnet | Provide private addressing for VMSS instances |
-| Network Security Group | Allows HTTP, health probes, and restricted SSH traffic |
-| Standard Public IP | Provides the public Load Balancer address and FQDN |
-| Standard Load Balancer | Distributes requests and probes backend health |
-| Virtual Machine Scale Set | Runs the FastAPI service across elastic Ubuntu instances |
-| Azure Monitor Autoscale | Adds or removes instances from CPU thresholds |
-| NAT Gateway | Provides predictable outbound internet connectivity |
+The diagram shows logical paths using the default region and network ranges. Solid arrows show application and outbound traffic; dotted arrows show health probes, SSH, provisioning and scaling.
 
 ## Key design decisions
 
 - VMSS instances have private addresses and receive application traffic through the Load Balancer.
 - The public frontend listens on port 80 while the non-root FastAPI service listens on backend port 8000.
 - Health probes request `/` on port 8000 and keep unhealthy instances out of rotation.
-- `custom_data` passes the bootstrap script to cloud-init during provisioning.
-- FastAPI runs as the `azureuser` account under `systemd` and restarts after failures or reboots.
+- `custom_data` passes the bootstrap script to cloud-init. VMSS provisioning waits for the subnet NSG, NAT subnet association and NAT public-IP association.
+- FastAPI runs as `azureuser` under `systemd`, with restart and boot startup enabled. FastAPI and Uvicorn versions are pinned; package downloads use bounded retries.
 - Load Balancer outbound SNAT is disabled because the subnet uses a NAT Gateway.
 - Terraform ignores later changes to VMSS capacity so Azure Monitor can manage autoscaling without configuration drift.
 
@@ -161,15 +136,20 @@ Repeated requests may show different hostnames as the Load Balancer distributes 
 | Average CPU above 80% for 5 minutes | Add one instance |
 | Average CPU below 10% for 5 minutes | Remove one instance |
 | Capacity boundaries | Minimum 1, default 3, maximum 10 |
+| Cooldown after either action | 1 minute |
 
 ## Security choices
 
 - Password authentication is disabled on every VMSS instance.
-- SSH is permitted only from `admin_source_cidr`; a `/32` limits access to one public IPv4 address.
+- Public SSH access is restricted to `admin_source_cidr`; use a `/32` for one public IPv4 address.
 - Backend instances do not receive individual public IP addresses.
 - HTTP client traffic and Azure Load Balancer health probes use separate NSG rules.
 - VM user data contains no credentials or application secrets.
 - Terraform variable files, state files, plans, environment files, and private keys are ignored by Git.
+
+## Automated checks
+
+[GitHub Actions](.github/workflows/validate.yml) checks Terraform formatting and configuration, Bash syntax, ShellCheck findings and embedded Python syntax on pushes to `main` and pull requests. The workflow also supports manual runs and requires no Azure credentials.
 
 ## Design scope
 
@@ -179,9 +159,7 @@ This is a focused learning project rather than a production platform:
 - Autoscaling may reduce capacity to one instance, which removes instance redundancy at low load.
 - The application uses HTTP without TLS termination.
 - Terraform state is local rather than stored in a protected remote backend.
-- Centralized logging, boot diagnostics, automated tests, and CI deployment are not included.
-
-These boundaries keep the project small while leaving clear next steps for multi-zone resilience, observability, TLS, remote state, and continuous validation.
+- Centralized logging, boot diagnostics and automated deployment are not included.
 
 ## Cleanup
 
