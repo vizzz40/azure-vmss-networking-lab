@@ -52,7 +52,8 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "vmss" {
 
   depends_on = [
     azurerm_subnet_network_security_group_association.subnet_nsg_association,
-    azurerm_subnet_nat_gateway_association.subnet_nat_assoc
+    azurerm_subnet_nat_gateway_association.subnet_nat_assoc,
+    azurerm_nat_gateway_public_ip_association.nat_pip_assoc
   ]
 }
 
