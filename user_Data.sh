@@ -3,12 +3,12 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get update
-apt-get install -y python3-venv
+apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60 install -y python3-venv
 
 install -d -o azureuser -g azureuser /opt/backend-api
 python3 -m venv /opt/backend-api/venv
-/opt/backend-api/venv/bin/pip install --no-cache-dir fastapi uvicorn
+/opt/backend-api/venv/bin/pip install --no-cache-dir --retries 5 --timeout 30 fastapi==0.141.1 uvicorn==0.52.4
 
 cat <<'PYTHON' > /opt/backend-api/main.py
 from fastapi import FastAPI
