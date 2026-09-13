@@ -1,0 +1,55 @@
+name: Validate lab
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.15.3
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize providers
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform validate -no-color
+
+      - name: Check bootstrap shell
+        run: |
+          bash -n user_Data.sh
+          shellcheck user_Data.sh
+
+      - name: Check embedded Python syntax
+        run: |
+          python3 - <<'PYTHON'
+          import ast
+          from pathlib import Path
+
+          script = Path("user_Data.sh").read_text()
+          source = script.split("cat <<'PYTHON' > /opt/backend-api/main.py\n", 1)[1].split("\nPYTHON\n", 1)[0]
+          ast.parse(source, filename="main.py")
+          PYTHON
